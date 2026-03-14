@@ -1,0 +1,39 @@
+<!DOCTYPE html><html lang="en"><head> <meta charset="UTF-8"> <meta name="viewport" content="width=device-width, initial-scale=1.0"> <title>3D Gesture Particles</title> <style> body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; } #ui { position: absolute; top: 20px; left: 20px; color: white; pointer-events: none; } canvas { display: block; } #video { transform: scaleX(-1); position: absolute; bottom: 10px; right: 10px; width: 160px; height: 120px; border: 2px solid #444; border-radius: 8px; } </style></head><body> <div id="ui"> <h2>Gesture Particle System</h2> <p>🖐️ <b>Open Hand:</b> Expand Particles</p> <p>✊ <b>Closed Fist:</b> Implode/Contract</p> <p>👌 <b>Pinch:</b> Switch Shape (Heart, Flower, Saturn)</p> <div id="status">Status: KILLER 37 READY....</div> <p>Made by-Vyom</p> </div> <video id="video" autoplay playsinline></video>
+
+<script type="importmap"> { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js", "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/" } } </script>
+
+<script type="module"> import * as THREE from 'three'; import { GestureRecognizer, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3";
+
+// --- SETUP SCENE --- const scene = new THREE.Scene(); const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000); const renderer = new THREE.WebGLRenderer({ antialias: true }); renderer.setSize(window.innerWidth, window.innerHeight); document.body.appendChild(renderer.domElement);
+
+const PARTICLE_COUNT = 5000; const geometry = new THREE.BufferGeometry(); const positions = new Float32Array(PARTICLE_COUNT * 3); const targetPositions = new Float32Array(PARTICLE_COUNT * 3); const colors = new Float32Array(PARTICLE_COUNT * 3);
+
+for (let i = 0; i < PARTICLE_COUNT; i++) { positions[i * 3] = (Math.random() - 0.5) * 10; positions[i * 3 + 1] = (Math.random() - 0.5) * 10; positions[i * 3 + 2] = (Math.random() - 0.5) * 10; }
+
+geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3)); const material = new THREE.PointsMaterial({ size: 0.05, vertexColors: true, transparent: true, opacity: 0.8 }); const particleSystem = new THREE.Points(geometry, material); scene.add(particleSystem); camera.position.z = 15;
+
+// --- SHAPE TEMPLATES --- const shapes = { sphere: () => { for (let i = 0; i < PARTICLE_COUNT; i++) { const phi = Math.acos(-1 + (2 * i) / PARTICLE_COUNT); const theta = Math.sqrt(PARTICLE_COUNT * Math.PI) * phi; targetPositions[i * 3] = 5 * Math.cos(theta) * Math.sin(phi); targetPositions[i * 3 + 1] = 5 * Math.sin(theta) * Math.sin(phi); targetPositions[i * 3 + 2] = 5 * Math.cos(phi); } }, heart: () => { for (let i = 0; i < PARTICLE_COUNT; i++) { const t = Math.random() * Math.PI * 2; const x = 16 * Math.pow(Math.sin(t), 3); const y = 13 * Math.cos(t) - 5 * Math.cos(2*t) - 2 * Math.cos(3*t) - Math.cos(4*t); targetPositions[i * 3] = x * 0.3; targetPositions[i * 3 + 1] = y * 0.3; targetPositions[i * 3 + 2] = (Math.random() - 0.5) * 2; } }, saturn: () => { for (let i = 0; i < PARTICLE_COUNT; i++) { if (i < PARTICLE_COUNT * 0.4) { // Planet const u = Math.random(), v = Math.random(); const theta = 2 * Math.PI * u, phi = Math.acos(2 * v - 1); targetPositions[i * 3] = 3 * Math.sin(phi) * Math.cos(theta); targetPositions[i * 3 + 1] = 3 * Math.sin(phi) * Math.sin(theta); targetPositions[i * 3 + 2] = 3 * Math.cos(phi); } else { // Rings const angle = Math.random() * Math.PI * 2; const radius = 5 + Math.random() * 2.5; targetPositions[i * 3] = radius * Math.cos(angle); targetPositions[i * 3 + 1] = (Math.random() - 0.5) * 0.2; targetPositions[i * 3 + 2] = radius * Math.sin(angle); } } } };
+
+let currentShapeIdx = 0; const shapeKeys = Object.keys(shapes); shapes.sphere(); // Default
+
+// --- MEDIAPIPE AI SETUP --- let gestureRecognizer; async function initAI() { const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm"); gestureRecognizer = await GestureRecognizer.createFromOptions(vision, { baseOptions: { modelAssetPath: "https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task" }, runningMode: "VIDEO" }); document.getElementById('status').innerText = "Status: AI Ready! Show your hand."; startCamera(); }
+
+async function startCamera() { const video = document.getElementById('video'); const stream = await navigator.mediaDevices.getUserMedia({ video: true }); video.srcObject = stream; video.addEventListener('loadeddata', predict); }
+
+let lastPinch = false; let expansionFactor = 1.0; let colorHue = 0.6;
+
+async function predict() { const video = document.getElementById('video'); const results = gestureRecognizer.recognizeForVideo(video, performance.now()); if (results.landmarks.length > 0) { const hand = results.landmarks[0]; const gesture = results.gestures[0][0].categoryName;
+
+// 1. Expansion/Contraction (Based on hand scale/fist) if (gesture === "Closed_Fist") expansionFactor = THREE.MathUtils.lerp(expansionFactor, 0.2, 0.1); else if (gesture === "Open_Palm") expansionFactor = THREE.MathUtils.lerp(expansionFactor, 2.5, 0.1); else expansionFactor = THREE.MathUtils.lerp(expansionFactor, 1.0, 0.1);
+
+// 2. Shape Switching (Triggered by Pinch/Pointing) const isPinching = gesture === "Pointing_Up"; // Using Pointing_Up as a proxy for 'trigger' if (isPinching && !lastPinch) { currentShapeIdx = (currentShapeIdx + 1) % shapeKeys.length; shapes[shapeKeys[currentShapeIdx]](); colorHue = Math.random(); // Change color on switch } lastPinch = isPinching; } requestAnimationFrame(predict); }
+
+// --- ANIMATION LOOP --- function animate() { const posAttr = geometry.attributes.position; const colorAttr = geometry.attributes.color || new THREE.BufferAttribute(colors, 3); if (!geometry.attributes.color) geometry.setAttribute('color', colorAttr);
+
+for (let i = 0; i < PARTICLE_COUNT; i++) { // Morph to target positions posAttr.array[i * 3] = THREE.MathUtils.lerp(posAttr.array[i * 3], targetPositions[i * 3] * expansionFactor, 0.05); posAttr.array[i * 3 + 1] = THREE.MathUtils.lerp(posAttr.array[i * 3 + 1], targetPositions[i * 3 + 1] * expansionFactor, 0.05); posAttr.array[i * 3 + 2] = THREE.MathUtils.lerp(posAttr.array[i * 3 + 2], targetPositions[i * 3 + 2] * expansionFactor, 0.05);
+
+// Dynamic Colors const color = new THREE.Color().setHSL(colorHue, 0.8, 0.5); colorAttr.array[i * 3] = color.r; colorAttr.array[i * 3 + 1] = color.g; colorAttr.array[i * 3 + 2] = color.b; } posAttr.needsUpdate = true; colorAttr.needsUpdate = true; particleSystem.rotation.y += 0.005; renderer.render(scene, camera); requestAnimationFrame(animate); }
+
+window.addEventListener('resize', () => { camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); });
+
+initAI(); animate(); </script></body></html> 
